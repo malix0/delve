@@ -28,16 +28,24 @@ func testnext() {
 			break
 		}
 
-		helloworld()
+		j = foo(i)
 	}
 
 	helloworld()
 }
 
 func main() {
-	runtime.LockOSThread()
+	// runtime.LockOSThread()
 	for {
 		testnext()
 		fmt.Println("foo")
 	}
+}
+
+func init() {
+	runtime.LockOSThread()
+}
+
+func foo(i int) int {
+	return i * 2
 }

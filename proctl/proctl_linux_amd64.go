@@ -103,7 +103,6 @@ func Launch(cmd []string) (*DebuggedProcess, error) {
 	return newDebugProcess(proc.Process.Pid, false)
 }
 
-// Returns a new DebuggedProcess struct with sensible defaults.
 func newDebugProcess(pid int, attach bool) (*DebuggedProcess, error) {
 	dbp := DebuggedProcess{
 		Pid:         pid,
@@ -193,6 +192,7 @@ func (dbp *DebuggedProcess) addThread(tid int) (*ThreadContext, error) {
 		Process: dbp,
 		Regs:    new(syscall.PtraceRegs),
 	}
+	fmt.Println("ADDED THREAD")
 
 	return dbp.Threads[tid], nil
 }
@@ -254,7 +254,9 @@ func (dbp *DebuggedProcess) Step() (err error) {
 		err := thread.Step()
 		if err != nil {
 			if _, ok := err.(ProcessExitedError); !ok {
-				return err
+				if _, ok := err.(BlockedMerr); !ok {
+					return err
+				}
 			}
 		}
 	}
@@ -391,65 +393,54 @@ func (pe ProcessExitedError) Error() string {
 }
 
 func trapWait(dbp *DebuggedProcess, p int, options int) (int, *syscall.WaitStatus, error) {
-	var status syscall.WaitStatus
+	var (
+		status syscall.WaitStatus
+		// pstatus *syscall.WaitStatus
+		wpid int
+		err  error
+	)
 
+	// for {
+	// if p > 0 {
+	// 	thread := dbp.Threads[p]
+	// 	fmt.Println("trap timeout wait")
+	// 	wpid, pstatus, err = timeoutWait(thread, 0)
+	// 	if err != nil {
+	// 		fmt.Println("err", err)
+	// 		return 0, nil, err
+	// 	}
+	// 	status = *pstatus
+	// } else {
 	for {
-		pid, err := syscall.Wait4(p, &status, syscall.WALL|options, nil)
+		wpid, err = syscall.Wait4(p, &status, syscall.WALL|options, nil)
 		if err != nil {
-			return -1, nil, fmt.Errorf("wait err %s %d", err, pid)
+			return -1, nil, fmt.Errorf("wait err %s %d", err, wpid)
 		}
 
-		thread, threadtraced := dbp.Threads[pid]
+		thread, threadtraced := dbp.Threads[wpid]
 		if !threadtraced {
 			continue
 		}
 		thread.Status = &status
 
-		if status.Exited() {
-			if pid == dbp.Pid {
-				return 0, nil, ProcessExitedError{pid}
-			}
-			delete(dbp.Threads, pid)
-			continue
-		}
-
-		switch status.TrapCause() {
-		case syscall.PTRACE_EVENT_CLONE:
-			addNewThread(dbp, pid)
-		default:
-			pc, err := thread.CurrentPC()
+		if status.StopSignal() == syscall.PTRACE_EVENT_CLONE {
+			err = addNewThread(dbp, wpid)
 			if err != nil {
-				return -1, nil, fmt.Errorf("could not get current pc %s", err)
-			}
-			// Check to see if we hit a runtime.breakpoint
-			fn := dbp.GoSymTable.PCToFunc(pc)
-			if fn != nil && fn.Name == "runtime.breakpoint" {
-				// step twice to get back to user code
-				for i := 0; i < 2; i++ {
-					err = thread.Step()
-					if err != nil {
-						return -1, nil, err
-					}
-				}
-				handleBreakPoint(dbp, thread, pid)
-				return pid, &status, nil
-			}
-
-			// Check to see if we have hit a user set breakpoint.
-			if bp, ok := dbp.BreakPoints[pc-1]; ok {
-				if !bp.temp {
-					handleBreakPoint(dbp, thread, pid)
-				}
-				return pid, &status, nil
+				return -1, nil, err
 			}
 		}
 
-		if status.Stopped() {
-			// The thread has stopped, but has not hit a breakpoint.
-			// Continue the thread without returning control back
-			// to the console.
-			syscall.PtraceCont(pid, 0)
+		if status.StopSignal() == syscall.SIGTRAP {
+			return wpid, status, nil
 		}
+	}
+
+	if status.Exited() {
+		if wpid == dbp.Pid {
+			return 0, nil, ProcessExitedError{wpid}
+		}
+		delete(dbp.Threads, wpid)
+		continue
 	}
 }
 
@@ -493,54 +484,133 @@ func (err TimeoutError) Error() string {
 	return fmt.Sprintf("timeout waiting for %d", err.pid)
 }
 
-// timeoutwait waits the specified duration before returning
-// a TimeoutError.
-func timeoutWait(pid int, options int) (int, *syscall.WaitStatus, error) {
+type BlockedMerr struct {
+	tid int
+}
+
+func (bme BlockedMerr) Error() string {
+	return fmt.Sprintf("thread %d is blocked", bme.tid)
+}
+
+// timeoutWait implements wraps a non-blocking wait. This is useful for ensuring we are
+// not waiting indefinitely on a thread that is internally blocked by the scheduler.
+func timeoutWait(thread *ThreadContext, options int) (int, *syscall.WaitStatus, error) {
 	var (
-		status   syscall.WaitStatus
-		statchan = make(chan *waitstats)
-		errchan  = make(chan error)
+		status    syscall.WaitStatus
+		wpid      int
+		err       error
+		usersleep bool
+		pid       = thread.Id
 	)
 
-	if pid > 0 {
+	if thread.Id == thread.Process.Pid {
+		// err := thread.Process.PrintGoroutinesInfo()
+		// if err != nil {
+		// 	fmt.Println("print goroutines", err)
+		// }
+		// thread.Process.PrintThreadInfo()
+	}
+	for {
+		wpid, err = syscall.Wait4(pid, &status, syscall.WALL|syscall.WNOHANG|options, nil)
+		if err != nil {
+			return -1, nil, err
+		}
+		if wpid > 0 {
+			break
+		}
+
 		ps, err := parseProcessStatus(pid)
 		if err != nil {
 			return -1, nil, err
 		}
-
-		if ps.state == STATUS_SLEEPING {
-			return 0, nil, nil
-		}
-	}
-
-	go func(pid int) {
-		pid, err := syscall.Wait4(pid, &status, syscall.WALL|options, nil)
-		if err != nil {
-			errchan <- fmt.Errorf("wait err %s %d", err, pid)
-		}
-
-		statchan <- &waitstats{pid: pid, status: &status}
-	}(pid)
-
-	select {
-	case s := <-statchan:
-		return s.pid, s.status, nil
-	case <-time.After(2 * time.Second):
-		if pid > 0 {
-			ps, err := parseProcessStatus(pid)
+		if ps.state == STATUS_SLEEPING && !usersleep {
+			if err = syscall.Tgkill(thread.Process.Pid, thread.Id, syscall.SIGSTOP); err != nil {
+				return 0, nil, err
+			}
+			var status syscall.WaitStatus
+			if _, err = syscall.Wait4(thread.Id, &status, syscall.WALL, nil); err != nil {
+				return 0, nil, err
+			}
+			fmt.Println("trap cause", status.TrapCause(), status.Exited(), status.Stopped(), status.StopSignal() == syscall.SIGSTOP)
+			m, err := thread.M()
 			if err != nil {
 				return -1, nil, err
 			}
-			syscall.Tgkill(ps.ppid, ps.pid, syscall.SIGSTOP)
+			pc, err := thread.CurrentPC()
+			if err != nil {
+				return -1, nil, err
+			}
+			fn := thread.Process.GoSymTable.PCToFunc(pc)
+			if fn != nil {
+				fmt.Println(fn.Name, thread.Id, thread.Process.Pid)
+			}
+			if m.blocked == 1 {
+				if thread.Id == thread.Process.Pid {
+					var m *M
+					allm, _ := thread.AllM()
+					for _, mp := range allm {
+						if mp.id == 1 {
+							m = mp
+						}
+					}
+					th, _ := thread.Process.Threads[m.procid]
+					thread.Continue()
+					th.Continue()
+					fmt.Println("th", thread.Process.Pid)
+					// time.Sleep(10 * time.Second)
+					// continue
+					continue
+				}
+				// fmt.Println("m procid", m.procid)
+				// var m *M
+				// allm, _ := thread.AllM()
+				// for _, mp := range allm {
+				// 	if mp.id == 1 {
+				// 		m = mp
+				// 	}
+				// }
+				// fmt.Println(thread.Process.Pid, thread.Id, m.procid)
+				// thread.Process.PrintGoroutinesInfo()
+				// thread.Process.PrintThreadInfo()
+				return 0, nil, BlockedMerr{thread.Id}
+			}
+			// thread.Continue()
+			usersleep = true
 		}
-
-		return 0, nil, TimeoutError{pid}
-	case err := <-errchan:
-		return -1, nil, err
+		time.Sleep(100 * time.Nanosecond)
 	}
+	return wpid, &status, nil
 }
 
 func handleBreakPoint(dbp *DebuggedProcess, thread *ThreadContext, pid int) error {
+	pc, err := thread.CurrentPC()
+	if err != nil {
+		return -1, nil, fmt.Errorf("could not get current pc %s", err)
+	}
+	// Check to see if we hit a runtime.breakpoint
+	fn := dbp.GoSymTable.PCToFunc(pc)
+	if fn != nil && fn.Name == "runtime.breakpoint" {
+		// step twice to get back to user code
+		for i := 0; i < 2; i++ {
+			err = thread.Step()
+			if err != nil {
+				return -1, nil, err
+			}
+		}
+		handleBreakPoint(dbp, thread, wpid)
+		return wpid, &status, nil
+	}
+
+	// Check to see if we have hit a user set breakpoint.
+	if bp, ok := dbp.BreakPoints[pc-1]; ok {
+		if !bp.temp {
+			stopTheWorld(dbp, thread, wpid)
+		}
+		return wpid, &status, nil
+	}
+}
+
+func stopTheWorld(dbp *DebuggedProcess, thread *ThreadContext, pid int) error {
 	if pid != dbp.CurrentThread.Id {
 		fmt.Printf("thread context changed from %d to %d\n", dbp.CurrentThread.Id, pid)
 		dbp.CurrentThread = thread

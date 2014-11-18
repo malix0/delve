@@ -82,7 +82,7 @@ func (thread *ThreadContext) Break(addr uintptr) (*BreakPoint, error) {
 
 	_, err := syscall.PtracePeekData(thread.Id, addr, originalData)
 	if err != nil {
-		fmt.Println("PEEK ERR")
+		// fmt.Println("PEEK ERR")
 		return nil, err
 	}
 
@@ -92,7 +92,7 @@ func (thread *ThreadContext) Break(addr uintptr) (*BreakPoint, error) {
 
 	_, err = syscall.PtracePokeData(thread.Id, addr, int3)
 	if err != nil {
-		fmt.Println("POKE ERR")
+		// fmt.Println("POKE ERR")
 		return nil, err
 	}
 
@@ -159,6 +159,21 @@ func (thread *ThreadContext) Continue() error {
 	return syscall.PtraceCont(thread.Id, 0)
 }
 
+func (thread *ThreadContext) M() (*M, error) {
+	allm, err := thread.AllM()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, m := range allm {
+		if m.procid == thread.Id || (thread.Id == thread.Process.Pid && m.procid == 0) {
+			return m, nil
+		}
+	}
+
+	return nil, fmt.Errorf("could not find M for thread %d %d", thread.Id, thread.Process.Pid)
+}
+
 // Steps through thread of execution.
 func (thread *ThreadContext) Step() (err error) {
 	regs, err := thread.Registers()
@@ -168,6 +183,7 @@ func (thread *ThreadContext) Step() (err error) {
 
 	bp, ok := thread.Process.BreakPoints[regs.PC()-1]
 	if ok {
+		// fmt.Println("found bp")
 		// Clear the breakpoint so that we can continue execution.
 		_, err = thread.Process.Clear(bp.Addr)
 		if err != nil {
@@ -192,12 +208,9 @@ func (thread *ThreadContext) Step() (err error) {
 		return fmt.Errorf("step failed: %s", err.Error())
 	}
 
-	_, _, err = timeoutWait(thread.Id, 0)
+	_, _, err = timeoutWait(thread, 0)
 	if err != nil {
-		if _, ok := err.(TimeoutError); ok {
-			return nil
-		}
-		return fmt.Errorf("step failed: %s", err.Error())
+		return err
 	}
 
 	return nil
@@ -223,7 +236,7 @@ func (thread *ThreadContext) Next() (err error) {
 	step := func() (uint64, error) {
 		err = thread.Step()
 		if err != nil {
-			return 0, fmt.Errorf("next stepping failed: %s", err.Error())
+			return 0, err
 		}
 
 		return thread.CurrentPC()
@@ -231,8 +244,12 @@ func (thread *ThreadContext) Next() (err error) {
 
 	ret := thread.ReturnAddressFromOffset(fde.ReturnAddressOffset(pc))
 	for {
+		// fmt.Println("about to next step")
 		pc, err = step()
 		if err != nil {
+			if _, ok := err.(BlockedMerr); ok {
+				return nil
+			}
 			return err
 		}
 
@@ -240,6 +257,9 @@ func (thread *ThreadContext) Next() (err error) {
 			err := thread.continueToReturnAddress(pc, fde)
 			if err != nil {
 				if _, ok := err.(InvalidAddressError); !ok {
+					if _, ok := err.(BlockedMerr); ok {
+						return nil
+					}
 					return err
 				}
 			}
@@ -270,11 +290,13 @@ func (thread *ThreadContext) continueToReturnAddress(pc uint64, fde *frame.Frame
 			}
 		}
 		bp.temp = true
+		// fmt.Println("set breakpoint")
 
 		err = thread.Continue()
 		if err != nil {
 			return err
 		}
+		// fmt.Println("continued")
 
 		if _, _, err := trapWait(thread.Process, thread.Id, 0); err != nil {
 			return err
@@ -283,6 +305,7 @@ func (thread *ThreadContext) continueToReturnAddress(pc uint64, fde *frame.Frame
 		if err := thread.clearTempBreakpoint(bp.Addr); err != nil {
 			return err
 		}
+		// fmt.Println("cleared temp breakpoint")
 
 		pc, _ = thread.CurrentPC()
 	}
@@ -308,7 +331,7 @@ func (thread *ThreadContext) clearTempBreakpoint(pc uint64) error {
 	if bp, ok := thread.Process.BreakPoints[pc]; ok {
 		_, err := thread.Clear(bp.Addr)
 		if err != nil {
-			fmt.Println("ERR", err)
+			// fmt.Println("ERR", err)
 			return err
 		}
 
@@ -329,10 +352,11 @@ func (thread *ThreadContext) wait() error {
 	var status syscall.WaitStatus
 	_, err := syscall.Wait4(thread.Id, &status, 0, nil)
 	if err != nil {
-		if status.Exited() {
-			delete(thread.Process.Threads, thread.Id)
-			return ProcessExitedError{thread.Id}
-		}
+		// if status.Exited() {
+		// 	panic("thread exited")
+		// 	delete(thread.Process.Threads, thread.Id)
+		// 	return ProcessExitedError{thread.Id}
+		// }
 		return err
 	}
 

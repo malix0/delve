@@ -2,6 +2,7 @@ package proctl_test
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -216,11 +217,13 @@ func TestNext(t *testing.T) {
 		assertNoError(p.Continue(), t, "Continue()")
 
 		for _, tc := range testcases {
+			fmt.Println("BEGIN", tc.begin, tc.end)
 			f, ln := currentLineNumber(p, t)
 			if ln != tc.begin {
 				t.Fatalf("Program not stopped at correct spot expected %d was %s:%d", tc.begin, f, ln)
 			}
 
+			fmt.Println("about to next")
 			assertNoError(p.Next(), t, "Next() returned an error")
 
 			f, ln = currentLineNumber(p, t)

@@ -19,6 +19,239 @@ type Variable struct {
 	Type  string
 }
 
+type M struct {
+	id        int
+	procid    int
+	g0        uintptr
+	blocked   uint8
+	spinning  uint8
+	mallocing uint8
+	gcing     uint8
+	curg      uintptr
+	lockedg   uintptr
+	p         uintptr
+	locks     uint32
+}
+
+type G struct {
+	goid    uint64
+	pc      uint64
+	status  uint16
+	file    string
+	line    int
+	fn      string
+	lockedm uintptr
+}
+
+// Parses and returns select info on the internal M
+// data structures used by the Go scheduler.
+func (thread *ThreadContext) AllM() ([]*M, error) {
+	data, err := thread.Process.Executable.DWARF()
+	if err != nil {
+		return nil, err
+	}
+	reader := data.Reader()
+
+	procidoffset, err := offsetForMember("runtime.m", "procid", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	spinningoffset, err := offsetForMember("runtime.m", "spinning", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	alllinkoffset, err := offsetForMember("runtime.m", "alllink", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	locksoffset, err := offsetForMember("runtime.m", "locks", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	blockedoffset, err := offsetForMember("runtime.m", "blocked", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	idoffset, err := offsetForMember("runtime.m", "id", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	mallocingoffset, err := offsetForMember("runtime.m", "mallocing", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	gcingoffset, err := offsetForMember("runtime.m", "gcing", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	curgoffset, err := offsetForMember("runtime.m", "curg", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	lockedgoffset, err := offsetForMember("runtime.m", "lockedg", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	reader.Seek(0)
+	poffset, err := offsetForMember("runtime.m", "p", thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+
+	reader.Seek(0)
+	allmaddr, err := parseAllMPtr(thread.Process, reader)
+	if err != nil {
+		return nil, err
+	}
+	allmptr, err := thread.readMemory(uintptr(allmaddr), 8)
+	if err != nil {
+		return nil, err
+	}
+	m := binary.LittleEndian.Uint64(allmptr)
+	if m == 0 {
+		return nil, fmt.Errorf("allm contains no M pointers")
+	}
+
+	var allm []*M
+	for {
+		pbytes, err := thread.readMemory(uintptr(m+poffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		p := binary.LittleEndian.Uint64(pbytes)
+
+		curgbytes, err := thread.readMemory(uintptr(m+curgoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		curg := binary.LittleEndian.Uint64(curgbytes)
+
+		lockedgbytes, err := thread.readMemory(uintptr(m+lockedgoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		lockedg := binary.LittleEndian.Uint64(lockedgbytes)
+
+		g0bytes, err := thread.readMemory(uintptr(m), 8)
+		if err != nil {
+			return nil, err
+		}
+		g0 := binary.LittleEndian.Uint64(g0bytes)
+
+		locksbytes, err := thread.readMemory(uintptr(m+locksoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		locks := binary.LittleEndian.Uint32(locksbytes)
+
+		idbytes, err := thread.readMemory(uintptr(m+idoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		id := binary.LittleEndian.Uint64(idbytes)
+
+		procidbytes, err := thread.readMemory(uintptr(m+procidoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		procid := binary.LittleEndian.Uint64(procidbytes)
+
+		spinbytes, err := thread.readMemory(uintptr(m+spinningoffset), 1)
+		if err != nil {
+			return nil, err
+		}
+
+		blockbytes, err := thread.readMemory(uintptr(m+blockedoffset), 1)
+		if err != nil {
+			return nil, err
+		}
+
+		mallocingbytes, err := thread.readMemory(uintptr(m+mallocingoffset), 1)
+		if err != nil {
+			return nil, err
+		}
+
+		gcingbytes, err := thread.readMemory(uintptr(m+gcingoffset), 1)
+		if err != nil {
+			return nil, err
+		}
+
+		allm = append(allm, &M{
+			id:        int(id),
+			procid:    int(procid),
+			blocked:   blockbytes[0],
+			spinning:  spinbytes[0],
+			curg:      uintptr(curg),
+			p:         uintptr(p),
+			g0:        uintptr(g0),
+			lockedg:   uintptr(lockedg),
+			mallocing: mallocingbytes[0],
+			gcing:     gcingbytes[0],
+			locks:     locks,
+		})
+		// Follow the linked list
+		mptr, err := thread.readMemory(uintptr(m+alllinkoffset), 8)
+		if err != nil {
+			return nil, err
+		}
+		m = binary.LittleEndian.Uint64(mptr)
+		if m == 0 {
+			break
+		}
+	}
+
+	return allm, nil
+}
+
+func offsetForMember(parent, member string, dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
+	reader.Seek(0)
+	_, err := findDwarfEntry(parent, reader)
+	if err != nil {
+		return 0, err
+	}
+	entry, err := findDwarfEntry(member, reader)
+	if err != nil {
+		return 0, err
+	}
+	instructions, ok := entry.Val(dwarf.AttrDataMemberLoc).([]byte)
+	if !ok {
+		return 0, fmt.Errorf("type assertion failed")
+	}
+	addr, err := op.ExecuteStackProgram(0, instructions)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(addr), nil
+}
+
+func parseAllMPtr(dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
+	entry, err := findDwarfEntry("runtime.allm", reader)
+	if err != nil {
+		return 0, err
+	}
+
+	instructions, ok := entry.Val(dwarf.AttrLocation).([]byte)
+	if !ok {
+		return 0, fmt.Errorf("type assertion failed")
+	}
+	addr, err := op.ExecuteStackProgram(0, instructions)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(addr), nil
+}
+
 func (dbp *DebuggedProcess) PrintGoroutinesInfo() error {
 	data, err := dbp.Executable.DWARF()
 	if err != nil {
@@ -36,6 +269,11 @@ func (dbp *DebuggedProcess) PrintGoroutinesInfo() error {
 		return err
 	}
 	reader.Seek(0)
+	lockedmoffset, err := parselockedmoffset(dbp, reader)
+	if err != nil {
+		return err
+	}
+	reader.Seek(0)
 	schedoffset, err := parseschedoffset(dbp, reader)
 	if err != nil {
 		return err
@@ -45,38 +283,72 @@ func (dbp *DebuggedProcess) PrintGoroutinesInfo() error {
 	if err != nil {
 		return err
 	}
+	reader.Seek(0)
+	statusoffset, err := parsestatusoffset(dbp, reader)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("[%d goroutines]\n", allglen)
 	faddr, err := dbp.CurrentThread.readMemory(uintptr(allgentryaddr), 8)
 	allg := binary.LittleEndian.Uint64(faddr)
 
 	for i := uint64(0); i < allglen; i++ {
-		err = printGoroutineInfo(dbp, allg+(i*8), goidoffset, schedoffset)
+		g, err := parseGoroutineInfo(dbp, allg+(i*8), goidoffset, schedoffset, statusoffset, lockedmoffset)
 		if err != nil {
 			return err
 		}
+		printGoroutineInfo(g)
 	}
 
 	return nil
 }
 
-func printGoroutineInfo(dbp *DebuggedProcess, addr uint64, goidoffset, schedoffset uint64) error {
+func parseGoroutineInfo(dbp *DebuggedProcess, addr uint64, goidoffset, schedoffset, statusoffset, lockedmoffset uint64) (*G, error) {
+	var fnstr string
+
 	gaddrbytes, err := dbp.CurrentThread.readMemory(uintptr(addr), 8)
 	if err != nil {
-		return fmt.Errorf("error derefing *G %s", err)
+		return nil, fmt.Errorf("error derefing *G %s", err)
 	}
 	gaddr := binary.LittleEndian.Uint64(gaddrbytes)
 
 	goidbytes, err := dbp.CurrentThread.readMemory(uintptr(gaddr+goidoffset), 8)
 	if err != nil {
-		return fmt.Errorf("error reading goid %s", err)
+		return nil, fmt.Errorf("error reading goid %s", err)
+	}
+	lockedmbytes, err := dbp.CurrentThread.readMemory(uintptr(gaddr+lockedmoffset), 8)
+	if err != nil {
+		return nil, fmt.Errorf("error reading goid %s", err)
+	}
+	statusbytes, err := dbp.CurrentThread.readMemory(uintptr(gaddr+statusoffset), 8)
+	if err != nil {
+		return nil, fmt.Errorf("error reading status %s", err)
 	}
 	schedbytes, err := dbp.CurrentThread.readMemory(uintptr(gaddr+schedoffset+8), 8)
 	if err != nil {
-		return fmt.Errorf("error reading goid %s", err)
+		return nil, fmt.Errorf("error reading goid %s", err)
 	}
 	gopc := binary.LittleEndian.Uint64(schedbytes)
-	f, l, _ := dbp.GoSymTable.PCToLine(gopc)
-	fmt.Printf("Goroutine %d - %s:%d\n", binary.LittleEndian.Uint64(goidbytes), f, l)
+	f, l, fn := dbp.GoSymTable.PCToLine(gopc)
+
+	if fn != nil {
+		fnstr = fn.Name
+	}
+
+	return &G{
+		goid:    binary.LittleEndian.Uint64(goidbytes),
+		pc:      gopc,
+		status:  binary.LittleEndian.Uint16(statusbytes),
+		file:    f,
+		line:    l,
+		fn:      fnstr,
+		lockedm: uintptr(binary.LittleEndian.Uint64(lockedmbytes)),
+	}, nil
+}
+
+func printGoroutineInfo(g *G) error {
+	fmt.Printf("Goroutine %d (%d) %#v - (lockedm: %#v) %s:%d %s\n", g.goid, g.status, g.pc, g.lockedm, g.file, g.line, g.fn)
 	return nil
 }
 
@@ -117,6 +389,40 @@ func allgentryptr(dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
 	}
 
 	return uint64(addr), nil
+}
+
+func parselockedmoffset(dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
+	entry, err := findDwarfEntry("lockedm", reader)
+	if err != nil {
+		return 0, err
+	}
+	instructions, ok := entry.Val(dwarf.AttrDataMemberLoc).([]byte)
+	if !ok {
+		return 0, fmt.Errorf("type assertion failed")
+	}
+	offset, err := op.ExecuteStackProgram(0, instructions)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(offset), nil
+}
+
+func parsestatusoffset(dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
+	entry, err := findDwarfEntry("status", reader)
+	if err != nil {
+		return 0, err
+	}
+	instructions, ok := entry.Val(dwarf.AttrDataMemberLoc).([]byte)
+	if !ok {
+		return 0, fmt.Errorf("type assertion failed")
+	}
+	offset, err := op.ExecuteStackProgram(0, instructions)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint64(offset), nil
 }
 
 func parsegoidoffset(dbp *DebuggedProcess, reader *dwarf.Reader) (uint64, error) {
@@ -232,7 +538,7 @@ func findDwarfEntry(name string, reader *dwarf.Reader) (*dwarf.Entry, error) {
 			return nil, err
 		}
 
-		if entry.Tag != dwarf.TagVariable && entry.Tag != dwarf.TagFormalParameter && entry.Tag != dwarf.TagMember {
+		if entry.Tag != dwarf.TagStructType && entry.Tag != dwarf.TagVariable && entry.Tag != dwarf.TagFormalParameter && entry.Tag != dwarf.TagMember {
 			continue
 		}
 
