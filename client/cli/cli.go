@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/derekparker/delve/command"
 	"github.com/derekparker/delve/goreadline"
@@ -94,7 +93,7 @@ func handleExit(dbp *proctl.DebuggedProcess, status int) {
 	}
 
 	fmt.Println("Detaching from process...")
-	err := syscall.PtraceDetach(dbp.Process.Pid)
+	err := dbp.Detach()
 	if err != nil {
 		die(2, "Could not detach", err)
 	}

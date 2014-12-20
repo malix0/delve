@@ -137,7 +137,7 @@ func (thread *ThreadContext) Continue() error {
 		}
 	}
 
-	return syscall.PtraceCont(thread.Id, 0)
+	return thread.Process.ptraceCont(thread.Id)
 }
 
 // Single steps this thread a single instruction, ensuring that

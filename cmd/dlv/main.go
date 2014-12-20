@@ -4,19 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 
 	"github.com/derekparker/delve/client/cli"
 )
 
 const version string = "0.3.0.beta"
-
-func init() {
-	// We must ensure here that we are running on the same thread during
-	// the execution of dbg. This is due to the fact that ptrace(2) expects
-	// all commands after PTRACE_ATTACH to come from the same thread.
-	runtime.LockOSThread()
-}
 
 func main() {
 	var (

@@ -6,12 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
 func withTestProcess(name string, t *testing.T, fn func(p *DebuggedProcess)) {
-	runtime.LockOSThread()
 	base := filepath.Base(name)
 	if err := exec.Command("go", "build", "-gcflags=-N -l", "-o", base, name+".go").Run(); err != nil {
 		t.Fatalf("Could not compile %s due to %s", name, err)

@@ -24,6 +24,8 @@ type DebuggedProcess struct {
 	BreakPoints   map[uint64]*BreakPoint
 	Threads       map[int]*ThreadContext
 	CurrentThread *ThreadContext
+	ptchan        chan *ptrequst
+	pterrchan     chan error
 }
 
 // Represents a single breakpoint. Stores information on the break
@@ -110,6 +112,8 @@ func newDebugProcess(pid int, attach bool) (*DebuggedProcess, error) {
 		Pid:         pid,
 		Threads:     make(map[int]*ThreadContext),
 		BreakPoints: make(map[uint64]*BreakPoint),
+		ptchan:      make(chan *ptrequst),
+		pterrchan:   make(chan error),
 	}
 
 	if attach {
@@ -140,12 +144,26 @@ func newDebugProcess(pid int, attach bool) (*DebuggedProcess, error) {
 	return &dbp, nil
 }
 
+func (dbp *DebuggedProcess) Detach() error {
+	err := dbp.ptraceDetach(dbp.Process.Pid)
+	if err != nil {
+		return err
+	}
+
+	close(dbp.ptchan)
+	close(dbp.pterrchan)
+
+	return nil
+}
+
 func (dbp *DebuggedProcess) AttachThread(tid int) (*ThreadContext, error) {
 	if thread, ok := dbp.Threads[tid]; ok {
 		return thread, nil
 	}
 
-	err := syscall.PtraceAttach(tid)
+	go handlePtraceRequest(dbp.ptchan, dbp.pterrchan)
+
+	err := dbp.ptraceAttach(tid)
 	if err != nil && err != syscall.EPERM {
 		// Do not return err if err == EPERM,
 		// we may already be tracing this thread due to
@@ -411,17 +429,17 @@ func addNewThread(dbp *DebuggedProcess, pid int) error {
 	}
 	fmt.Println("new thread spawned", msg)
 
-	_, err = dbp.addThread(int(msg))
+	th, err := dbp.addThread(int(msg))
 	if err != nil {
 		return err
 	}
 
-	err = syscall.PtraceCont(int(msg), 0)
+	err = th.Continue()
 	if err != nil {
 		return fmt.Errorf("could not continue new thread %d %s", msg, err)
 	}
 
-	err = syscall.PtraceCont(pid, 0)
+	err = dbp.Threads[pid].Continue()
 	if err != nil {
 		return fmt.Errorf("could not continue stopped thread %d %s", pid, err)
 	}
