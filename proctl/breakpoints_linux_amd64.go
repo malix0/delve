@@ -19,29 +19,6 @@ import (
 	"syscall"
 )
 
-// Represents a single breakpoint. Stores information on the break
-// point including the byte of data that originally was stored at that
-// address.
-type BreakPoint struct {
-	FunctionName string
-	File         string
-	Line         int
-	Addr         uint64
-	OriginalData []byte
-	ID           int
-	temp         bool
-}
-
-type BreakPointExistsError struct {
-	file string
-	line int
-	addr uint64
-}
-
-func (bpe BreakPointExistsError) Error() string {
-	return fmt.Sprintf("Breakpoint exists at %s:%d at %x", bpe.file, bpe.line, bpe.addr)
-}
-
 func PtracePokeUser(tid int, off, addr uintptr) error {
 	_, _, err := syscall.Syscall6(syscall.SYS_PTRACE, syscall.PTRACE_POKEUSR, uintptr(tid), uintptr(off), uintptr(addr), 0, 0)
 	if err != syscall.Errno(0) {
