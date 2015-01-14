@@ -33,18 +33,20 @@ func (dbp *DebuggedProcess) addThread(tid int) (*ThreadContext, error) {
 	return dbp.Threads[tid], nil
 }
 
-func parseProcessStatus(pid int) (*ProcessStatus, error) {
-	var ps ProcessStatus
-
+func stopped(pid int) bool {
 	f, err := os.Open(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	fmt.Fscanf(f, "%d %s %c %d", &ps.pid, &ps.comm, &ps.state, &ps.ppid)
+	var state rune
+	fmt.Fscanf(f, "%d %s %c %d", _, _, &state)
 
-	return &ps, nil
+	if state == STATUS_TRACE_STOP {
+		return true
+	}
+	return false
 }
 
 // Finds the executable from /proc/<pid>/exe and then
