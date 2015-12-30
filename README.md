@@ -1,86 +1,21 @@
-# Delve
+![Delve](https://raw.githubusercontent.com/derekparker/delve/master/assets/delve_horizontal.png)
 
-### What is Delve?
+[![license](http://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/derekparker/delve/master/LICENSE)
+[![GoDoc](https://godoc.org/github.com/derekparker/delve?status.svg)](https://godoc.org/github.com/derekparker/delve)
+[![Build Status](https://travis-ci.org/derekparker/delve.svg?branch=travis-ci)](https://travis-ci.org/derekparker/delve)
+[![Join the chat at https://gitter.im/derekparker/delve](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/derekparker/delve?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-Delve is a (Beta) Go debugger, written in Go.
+**This project is currently pre 1.0.**
 
-This project is currently in beta. Most of the functionality is there, but there are various improvements to be made.
+The Github issue tracker is for **bugs** only. Please use the [developer mailing list](https://groups.google.com/forum/#!forum/delve-dev) for any feature proposals and discussions.
 
-### Building
+### About Delve
 
-Delve requires Go 1.4 to build.
+- [Building](https://github.com/derekparker/delve/wiki/Building)
+- [Usage](https://github.com/derekparker/delve/wiki/Usage)
+- [Command reference](https://github.com/derekparker/delve/wiki/Commands)
+- [Installation Tips & Troubleshooting](https://github.com/derekparker/delve/wiki/Tips-&-Troubleshooting)
+- [Upcoming Features](https://github.com/derekparker/delve/wiki/Upcoming-Features)
+- [Contributing](https://github.com/derekparker/delve/blob/master/CONTRIBUTING.md)
 
-```
-go get github.com/derekparker/delve/cmd/dlv
-```
-
-You will need readline installed on your system. With apt simply: `sudo apt-get install libreadline-dev` .
-
-### Features
-
-* Attach to an already running process
-* Launch a process and begin debug session
-* Set breakpoints, single step, step over functions, print variable contents, print thread and goroutine information
-
-### Usage
-
-The debugger can be launched in three ways:
-
-* Compile, run, and attach in one step:
-
-	```
-	$ dlv -run
-	```
-
-* Provide the name of the program you want to debug, and the debugger will launch it for you.
-
-	```
-	$ dlv path/to/program
-	```
-
-* Provide the pid of a currently running process, and the debugger will attach and begin the session.
-
-	```
-	$ sudo dlv -pid 44839
-	```
-
-### Breakpoints
-
-Delve can insert breakpoints via the `breakpoint` command once inside a debug session, however for ease of debugging, you can also call `runtime.Breakpoint()` and Delve will handle the breakpoint and stop the program at the next source line.
-
-### Commands
-
-Once inside a debugging session, the following commands may be used:
-
-* `break` - Set break point at the entry point of a function, or at a specific file/line. Example: `break foo.go:13`.
-
-* `continue` - Run until breakpoint or program termination.
-
-* `step` - Single step through program.
-
-* `next` - Step over to next source line.
-
-* `threads` - Print status of all traced threads.
-
-* `goroutines` - Print status of all goroutines.
-
-* `print $var` - Evaluate a variable.
-
-* `info $type [regex]` - Outputs information about the symbol table. An optional regex filters the list. Example `info funcs unicode`. Valid types are:
-  * `sources` - Prings the path of all source files
-  * `funcs` - Prings the name of all defined functions
-  * `locals` - Prints the name and value of all local variables in the current context
-  * `args` - Prints the name and value of all arguments to the current function
-
-* `exit` - Exit the debugger.
-
-
-### Upcoming features
-
-* In-scope variable setting
-* Support for OS X
-* Editor integration
-
-### License
-
-MIT
+Delve is a debugger for the Go programming language. The goal of the project is to provide a simple, full featured debugging tool for Go. Delve should be easy to invoke and easy to use. Chances are if you're using a debugger, most likely things aren't going your way. With that in mind, Delve should stay out of your way as much as possible.

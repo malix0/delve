@@ -119,6 +119,8 @@ var fnlookup = map[byte]instruction{
 }
 
 func executeCIEInstructions(cie *CommonInformationEntry) *FrameContext {
+	initialInstructions := make([]byte, len(cie.InitialInstructions))
+	copy(initialInstructions, cie.InitialInstructions)
 	frame := &FrameContext{
 		cie:           cie,
 		regs:          make(map[uint64]DWRule),
@@ -126,7 +128,7 @@ func executeCIEInstructions(cie *CommonInformationEntry) *FrameContext {
 		prevRegs:      make(map[uint64]DWRule),
 		codeAlignment: cie.CodeAlignmentFactor,
 		dataAlignment: cie.DataAlignmentFactor,
-		buf:           bytes.NewBuffer(cie.InitialInstructions),
+		buf:           bytes.NewBuffer(initialInstructions),
 	}
 
 	frame.ExecuteDwarfProgram()
@@ -138,7 +140,9 @@ func executeDwarfProgramUntilPC(fde *FrameDescriptionEntry, pc uint64) *FrameCon
 	frame := executeCIEInstructions(fde.CIE)
 	frame.loc = fde.Begin()
 	frame.address = pc
-	frame.ExecuteUntilPC(fde.Instructions)
+	fdeInstructions := make([]byte, len(fde.Instructions))
+	copy(fdeInstructions, fde.Instructions)
+	frame.ExecuteUntilPC(fdeInstructions)
 
 	return frame
 }
@@ -151,13 +155,13 @@ func (frame *FrameContext) ExecuteDwarfProgram() {
 
 // Execute dwarf instructions.
 func (frame *FrameContext) ExecuteUntilPC(instructions []byte) {
-	frame.buf.Reset()
+	frame.buf.Truncate(0)
 	frame.buf.Write(instructions)
 
 	// We only need to execute the instructions until
 	// ctx.loc > ctx.addess (which is the address we
 	// are currently at in the traced process).
-	for frame.address > frame.loc && frame.buf.Len() > 0 {
+	for frame.address >= frame.loc && frame.buf.Len() > 0 {
 		executeDwarfInstruction(frame)
 	}
 }
@@ -287,7 +291,7 @@ func offsetextended(frame *FrameContext) {
 		offset, _ = util.DecodeULEB128(frame.buf)
 	)
 
-	frame.regs[reg] = DWRule{offset: int64(offset), rule: rule_offset}
+	frame.regs[reg] = DWRule{offset: int64(offset) * frame.dataAlignment, rule: rule_offset}
 }
 
 func undefined(frame *FrameContext) {

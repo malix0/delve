@@ -4,3 +4,6 @@
 tags
 .dbg_history
 cmd/dlv/dlv
+.vagrant
+**/*.swp
+localtests

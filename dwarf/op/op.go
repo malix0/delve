@@ -3,6 +3,7 @@ package op
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/derekparker/delve/dwarf/util"
@@ -30,10 +31,10 @@ func ExecuteStackProgram(cfa int64, instructions []byte) (int64, error) {
 	stack := make([]int64, 0, 3)
 	buf := bytes.NewBuffer(instructions)
 
-	for ocfaode, err := buf.ReadByte(); err == nil; ocfaode, err = buf.ReadByte() {
-		fn, ok := oplut[ocfaode]
+	for opcode, err := buf.ReadByte(); err == nil; opcode, err = buf.ReadByte() {
+		fn, ok := oplut[opcode]
 		if !ok {
-			return 0, fmt.Errorf("invalid instruction %#v", ocfaode)
+			return 0, fmt.Errorf("invalid instruction %#v", opcode)
 		}
 
 		stack, err = fn(buf, stack, cfa)
@@ -42,10 +43,17 @@ func ExecuteStackProgram(cfa int64, instructions []byte) (int64, error) {
 		}
 	}
 
+	if len(stack) == 0 {
+		return 0, errors.New("empty OP stack")
+	}
+
 	return stack[len(stack)-1], nil
 }
 
 func callframecfa(buf *bytes.Buffer, stack []int64, cfa int64) ([]int64, error) {
+	if cfa == 0 {
+		return stack, fmt.Errorf("Could not retrieve CFA for current PC")
+	}
 	return append(stack, int64(cfa)), nil
 }
 

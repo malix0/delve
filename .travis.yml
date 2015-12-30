@@ -1,0 +1,14 @@
+language: go
+sudo: false
+
+os:
+  - linux
+  - osx
+
+go:
+  - tip
+  - 1.5
+
+matrix:
+  allow_failures:
+    - go: tip

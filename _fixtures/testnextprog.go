@@ -35,9 +35,19 @@ func testnext() {
 }
 
 func main() {
+	d := make(chan int)
+	testnext()
+	go testgoroutine(9, d)
+	<-d
+	fmt.Println("done")
+}
+
+// fix line
+func testgoroutine(foo int, d chan int) {
+	d <- foo
+}
+
+func init() {
 	runtime.LockOSThread()
-	for {
-		testnext()
-		fmt.Println("foo")
-	}
+	runtime.GOMAXPROCS(4)
 }

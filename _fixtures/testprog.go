@@ -2,20 +2,25 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 )
-
-func sleepytime() {
-	time.Sleep(time.Millisecond)
-}
 
 func helloworld() {
 	fmt.Println("Hello, World!")
 }
 
+func sleepytime() {
+	time.Sleep(time.Millisecond)
+}
+
 func main() {
-	for {
+	for i := 0; i < 500; i++ {
 		sleepytime()
 		helloworld()
 	}
+}
+
+func init() {
+	runtime.LockOSThread()
 }
